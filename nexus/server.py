@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import logging
 from inspect import iscoroutine
 
 from thriftpy.protocol.binary import TBinaryProtocol
@@ -7,6 +8,8 @@ from aiohttp.web import Application, Request, Response, run_app
 from aiohttp.web_exceptions import HTTPNotFound, HTTPInternalServerError
 
 from nexus.platform.thrift import serialize, deserialize, get_call_args
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncNexusServer(object):
@@ -62,6 +65,7 @@ class AsyncNexusServer(object):
                     setattr(rpc_result, exc_name, e)
                     break
             else:
+                logger.exception('NexusServiceError')
                 raise HTTPInternalServerError(body=b'') from e
 
         if rpc_result.oneway:
