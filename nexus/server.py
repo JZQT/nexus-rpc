@@ -1,13 +1,14 @@
 # coding: utf-8
 
 import logging
+from typing import Dict
 from inspect import iscoroutine
 
-from thriftpy.protocol.binary import TBinaryProtocol
+from thrift.protocol.TBinaryProtocol import TBinaryProtocol
 from aiohttp.web import Application, Request, Response, run_app
 from aiohttp.web_exceptions import HTTPNotFound, HTTPInternalServerError
 
-from nexus.platform.thrift import serialize, deserialize, get_call_args
+from .platform.thrift import serialize, deserialize, get_call_args, ThriftService
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +22,17 @@ class AsyncNexusServer(object):
         :param address: A (host, port) tuple.
         :param protocol_cls: Thrift protocol class, default is `TBinaryProtocol`.
         """
-        self.services_map = {_[0].__name__: _ for _ in services_map}
+        self.services_map: Dict[str, ThriftService] = {}
+        for service_module, handler in services_map:
+            service = ThriftService(service_module, handler)
+            self.services_map[service.name] = service
         self.address = address
         self.protocol_cls = protocol_cls
         self._app = Application()
-        self._app.router.add_post('/{service}/{api}', self._handle_request)
+        self._app.router.add_post('/{service}/{rpc}', self._handle_request)
+
+    def _has_service(self, service_name: str) -> bool:
+        return service_name in self.services_map
 
     @staticmethod
     async def _process(rpc_impl, call_args):
@@ -36,19 +43,18 @@ class AsyncNexusServer(object):
 
     async def _handle_request(self, request: Request):
         service_name = request.match_info['service']
-        api_name = request.match_info['api']
+        rpc_name = request.match_info['rpc']
 
-        if service_name not in self.services_map:
+        if not self._has_service(service_name):
             raise HTTPNotFound(body=b'')
 
-        service_class, handler = self.services_map[service_name]
-        if api_name not in service_class.thrift_services:
+        service = self.services_map[service_name]
+
+        if not service.has_rpc(rpc_name):
             raise HTTPNotFound(body=b'')
 
-        rpc_impl = getattr(handler, api_name)
-        rpc_args = getattr(service_class, api_name + '_args')()
-        rpc_result = getattr(service_class, api_name + '_result')()
-        rpc_result_thrift_spec = rpc_result.thrift_spec
+        rpc_impl = getattr(service.handler, rpc_name)
+        rpc_args, rpc_result = service.get_rpc_args_and_result_object(rpc_name)
 
         deserialize(rpc_args, await request.read(), self.protocol_cls)
 
@@ -57,19 +63,16 @@ class AsyncNexusServer(object):
         try:
             rpc_result.success = await self._process(rpc_impl, call_args)
         except Exception as e:
-            for key in sorted(rpc_result_thrift_spec):
-                _, exc_name, exc_class, *_ = rpc_result_thrift_spec[key]
+            for _, _, exc_name, exc_type_info, *_ in rpc_result.thrift_spec:
                 if exc_name == 'success':
                     continue
+                exc_class, *_ = exc_type_info
                 if isinstance(e, exc_class):
                     setattr(rpc_result, exc_name, e)
                     break
             else:
                 logger.exception('NexusServiceError')
                 raise HTTPInternalServerError(body=b'') from e
-
-        if rpc_result.oneway:
-            return Response(body=b'')
 
         return Response(body=serialize(rpc_result, self.protocol_cls))
 

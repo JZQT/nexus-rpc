@@ -15,7 +15,7 @@ setup(
     url="https://github.com/JZQT/nexus-rpc",
     description="Nexus is a http-based rpc framework.",
     license='MIT',
-    install_requires=['aiohttp', 'thriftpy'],
+    install_requires=['aiohttp', 'thrift'],
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.5',
