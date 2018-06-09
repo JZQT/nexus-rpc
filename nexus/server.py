@@ -63,15 +63,18 @@ class AsyncNexusServer(object):
         try:
             rpc_result.success = await self._process(rpc_impl, call_args)
         except Exception as e:
-            for _, _, exc_name, exc_type_info, *_ in rpc_result.thrift_spec:
+            for result_field_info in rpc_result.thrift_spec:
+                if result_field_info is None:
+                    continue
+                exc_name = result_field_info[2]
                 if exc_name == 'success':
                     continue
-                exc_class, *_ = exc_type_info
+                exc_class = result_field_info[3][0]
                 if isinstance(e, exc_class):
                     setattr(rpc_result, exc_name, e)
                     break
             else:
-                logger.exception('NexusServiceError')
+                logger.exception('NexusServiceError: Unrecognized Exception')
                 raise HTTPInternalServerError(body=b'') from e
 
         return Response(body=serialize(rpc_result, self.protocol_cls))
